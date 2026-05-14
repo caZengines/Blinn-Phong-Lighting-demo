@@ -30,14 +30,10 @@ const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
 };
 
-const std::vector<const char*> RequiredDeviceExtension = {
-    vk::KHRSwapchainExtensionName
-};
-
 #ifdef NDEBUG
-const bool enableValidationLayers = false;
+constexpr bool enableValidationLayers = false;
 #else
-const bool enableValidationLayers = true;
+constexpr bool enableValidationLayers = true;
 #endif
 
 struct Vertex {
@@ -147,6 +143,7 @@ class HelloTriangleApplication {
                                    .setFormat(swapchainSurfaceFormat.format)
                                    .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1})
                                    .setImage(image);
+                
                 swapchainImageViews.emplace_back(device, imageViewCreateInfo);
             }
         }
@@ -276,7 +273,7 @@ class HelloTriangleApplication {
         uint32_t findMemoryType(uint32_t typeFilter, vk::MemoryPropertyFlags properties){
             vk::PhysicalDeviceMemoryProperties memoryProperties = physicalDevice.getMemoryProperties();
             for(int i = 0 ; i < memoryProperties.memoryTypeCount ;++i){
-                if((typeFilter & (1 << i)) && ((memoryProperties.memoryTypes[i].propertyFlags & properties) == properties)){
+                if(( typeFilter & (1 << i) ) && ( (memoryProperties.memoryTypes[i].propertyFlags & properties) == properties) ){
                     return i;
                 }
             }
@@ -443,7 +440,7 @@ class HelloTriangleApplication {
             }
             if(!candidates.empty() && candidates.rbegin()-> first > 0) {
                 physicalDevice = candidates.rbegin()-> second;
-                std::cout << "GPU Information: " << physicalDevice.getProperties().deviceName << std::endl;
+                if(enableValidationLayers) std::cout << "GPU Information: " << physicalDevice.getProperties().deviceName << std::endl;
             }
             else{
                 throw std::runtime_error("failed to find a suitable GPU!");
@@ -559,7 +556,7 @@ class HelloTriangleApplication {
                 recreateSwapChain();
                 return;
             }
-            else if(result != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR){
+            else if(result  != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR){
               assert(result == vk::Result::eTimeout ||
                      result == vk::Result::eNotReady);
               throw std::runtime_error("failed to acquire swap chain image!");
@@ -688,8 +685,11 @@ class HelloTriangleApplication {
             std::vector<vk::QueueFamilyProperties> queueFamilyProperties = physicalDevice.getQueueFamilyProperties();
             auto graphicsQueueFamilyProperty = std::ranges::find_if(queueFamilyProperties, [](const auto &qfp)
                                                                     { return (qfp.queueFlags & vk::QueueFlagBits::eGraphics) != static_cast<vk::QueueFlags>(0); });
-            auto graphicIndex = static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(), graphicsQueueFamilyProperty));
-            queueIndex = graphicIndex;
+            if(graphicsQueueFamilyProperty != queueFamilyProperties.end()){
+                auto graphicIndex = static_cast<uint32_t>(std::distance(queueFamilyProperties.begin(), graphicsQueueFamilyProperty));
+                queueIndex = graphicIndex;
+            }
+            if(queueIndex == ~0) throw std::runtime_error("Could not find a queue for graphics and present -> terminating");
 
             //enabledPhysicalDeviceFeatures
             vk::PhysicalDeviceFeatures deviceFeatures;
@@ -702,16 +702,16 @@ class HelloTriangleApplication {
             auto& deviceFeatures2 = featureChain.get<vk::PhysicalDeviceFeatures2>();
             deviceFeatures2.features.setFillModeNonSolid(true);
 
-            featureChain.get<vk::PhysicalDeviceVulkan13Features>().setDynamicRendering(true);
+            featureChain.get<vk::PhysicalDeviceVulkan13Features>().setDynamicRendering(true);  // vk::PhysicalDeviceVulkan13Features
             featureChain.get<vk::PhysicalDeviceVulkan13Features>().setSynchronization2(true);
-            featureChain.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().setExtendedDynamicState(true);
+            featureChain.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().setExtendedDynamicState(true);  // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
             featureChain.get<vk::PhysicalDeviceShaderDrawParametersFeatures>().setShaderDrawParameters(true);
-            featureChain.get<vk::PhysicalDeviceTimelineSemaphoreFeaturesKHR>().setTimelineSemaphore(true);
+            featureChain.get<vk::PhysicalDeviceTimelineSemaphoreFeaturesKHR>().setTimelineSemaphore(true); //vk::PhysicalDeviceTimelineSemaphoreFeaturesKHR
 
             std::vector<const char *> requiredDeviceExtension = {vk::KHRSwapchainExtensionName};
             float queuePriority = 0.5f;
             vk::DeviceQueueCreateInfo deviceQueueCreateInfo;
-            deviceQueueCreateInfo.setQueueFamilyIndex(graphicIndex)
+            deviceQueueCreateInfo.setQueueFamilyIndex(queueIndex)
                                  .setQueueCount(1)
                                  .setPQueuePriorities(&queuePriority);
 
@@ -723,7 +723,7 @@ class HelloTriangleApplication {
 
             device = vk::raii::Device(physicalDevice, deviceCreateInfo);
 
-            graphicsQueue = vk::raii::Queue(device, graphicIndex, 0);
+            graphicsQueue = vk::raii::Queue(device, queueIndex, 0);
         }
 
         void createSurface()
