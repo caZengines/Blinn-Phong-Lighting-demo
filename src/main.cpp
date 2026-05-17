@@ -57,9 +57,14 @@ struct Vertex {
 };
 
 const std::vector<Vertex> vertices = {
-    {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
     {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f}, {1.0f, 0.0f, 1.0f}}
+    {{-0.5f, 0.5f},{1.0f, 1.0f, 1.0f}}
+};
+
+const std::vector<uint32_t> indecis = {
+    0, 1, 2, 2, 3, 0
 };
 
 class HelloTriangleApplication {
@@ -93,9 +98,11 @@ class HelloTriangleApplication {
         vk::raii::Pipeline                       graphicsPipeline = nullptr;
         vk::raii::CommandPool                    graphicsCommandPool      = nullptr;
         vk::raii::CommandPool                    transientCommandPool     = nullptr;
-        std::vector<vk::raii::CommandBuffer>     graphicsCommandBuffer;
-        vk::raii::Buffer                         vertexBuffer       = nullptr;
-        vk::raii::DeviceMemory                   vertexBufferMemory = nullptr;
+        std::vector<vk::raii::CommandBuffer>     graphicsCommandBuffers;
+        vk::raii::Buffer                         vertexBuffer        = nullptr;
+        vk::raii::DeviceMemory                   vertexBufferMemory  = nullptr;
+        vk::raii::Buffer                         indexBuffer         = nullptr;
+        vk::raii::DeviceMemory                   indexBufferMemory   = nullptr;
         uint32_t                                 frameIndex       = 0;
 
         std::vector<vk::raii::Semaphore>         presentCompleteSemaphores;
@@ -132,8 +139,9 @@ class HelloTriangleApplication {
             createSwapChain();
             createImageViews();
             createGraphicsPipeline();
-            createCommandPool();
-            createVertexBuffers();
+            createCommandPools();
+            createVertexBuffer();
+            createIndexBuffer();
             createCommandBuffers();
             createSyncObjects();
         }
@@ -245,7 +253,7 @@ class HelloTriangleApplication {
             graphicsPipeline = vk::raii::Pipeline(device, nullptr, pipelineCreateInfoChain.get<vk::GraphicsPipelineCreateInfo>());
         }
 
-        void createCommandPool(){
+        void createCommandPools(){
             vk::CommandPoolCreateInfo graphicsPoolInfo;
             graphicsPoolInfo.setFlags(vk::CommandPoolCreateFlagBits::eResetCommandBuffer)
                             .setQueueFamilyIndex(graphicsQueueIndex);
@@ -256,7 +264,7 @@ class HelloTriangleApplication {
             transientCommandPool = vk::raii::CommandPool(device, transientPoolInfo);
         }
 
-        std::pair<vk::raii::Buffer, vk::raii::DeviceMemory> createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::SharingMode mode, const std::vector<uint32_t>& queueFamilyIndecies = {}){
+        std::pair<vk::raii::Buffer, vk::raii::DeviceMemory> createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::SharingMode mode = vk::SharingMode::eExclusive, const std::vector<uint32_t>& queueFamilyIndecies = {}){
             vk::BufferCreateInfo bufferInfo;
             bufferInfo.setSize(size).setUsage(usage).setSharingMode(mode);
             if(mode == vk::SharingMode::eConcurrent){
@@ -290,14 +298,13 @@ class HelloTriangleApplication {
             (void)device.waitForFences({*transferFence}, VK_TRUE, UINT64_MAX);
         }
 
-        void createVertexBuffers(){
+        void createVertexBuffer(){
             vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
             auto [stagingBuffer, stagingBufferMemory] = 
                         createBuffer(bufferSize, 
                                     vk::BufferUsageFlagBits::eTransferSrc, 
-                                    vk::MemoryPropertyFlagBits::eHostCoherent | vk::MemoryPropertyFlagBits::eHostVisible, 
-                                    vk::SharingMode::eExclusive);
-            
+                                    vk::MemoryPropertyFlagBits::eHostCoherent | vk::MemoryPropertyFlagBits::eHostVisible
+            );
             void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
             memcpy(dataStaging, vertices.data(), bufferSize);
             stagingBufferMemory.unmapMemory();
@@ -307,7 +314,8 @@ class HelloTriangleApplication {
                                      vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
                                      vk::MemoryPropertyFlagBits::eDeviceLocal,
                                      vk::SharingMode::eConcurrent,
-                                    {graphicsQueueIndex, transferQueueIndex});
+                                    {graphicsQueueIndex, transferQueueIndex}
+            );
             copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
         }
 
@@ -321,17 +329,40 @@ class HelloTriangleApplication {
             throw std::runtime_error("failed to find suitable memory type!");
         }
 
+        void createIndexBuffer(){
+            vk::DeviceSize BufferSize = sizeof(indecis[0]) * indecis.size();
+            auto [stagingBuffer, stagingBufferMemory] = 
+                        createBuffer(
+                                     BufferSize,
+                                     vk::BufferUsageFlagBits::eTransferSrc,
+                                     vk::MemoryPropertyFlagBits::eHostCoherent | vk::MemoryPropertyFlagBits::eHostVisible
+            );
+            void* dataStaging = stagingBufferMemory.mapMemory(0, BufferSize);
+            memcpy(dataStaging, indecis.data(), (size_t)BufferSize);
+            stagingBufferMemory.unmapMemory();
+
+            std::tie(indexBuffer, indexBufferMemory) = 
+                        createBuffer(
+                            BufferSize,
+                            vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+                            vk::MemoryPropertyFlagBits::eDeviceLocal,
+                            vk::SharingMode::eConcurrent,
+                            {graphicsQueueIndex, transferQueueIndex}
+            );
+            copyBuffer(stagingBuffer, indexBuffer, BufferSize);
+        }
+
         void createCommandBuffers(){
             vk::CommandBufferAllocateInfo allocInfo;
              allocInfo.setCommandPool(*graphicsCommandPool)
                       .setLevel(vk::CommandBufferLevel::ePrimary)
                       .setCommandBufferCount(MAX_FRAMES_IN_FLIGHT);
             
-                graphicsCommandBuffer = vk::raii::CommandBuffers(device, allocInfo);
+                graphicsCommandBuffers = vk::raii::CommandBuffers(device, allocInfo);
         }
 
         void recordCommandBuffer(uint32_t ImageIndex){
-            graphicsCommandBuffer[frameIndex].begin({});
+            graphicsCommandBuffers[frameIndex].begin({});
 
             // Before starting rendering, transition the swapchain image to vk::ImageLayout::eColorAttachmentOptimal
             transition_image_layout(
@@ -360,17 +391,18 @@ class HelloTriangleApplication {
                          .setColorAttachments(attachmentInfo);
 
             //start rendering
-            graphicsCommandBuffer[frameIndex].beginRendering(renderingInfo);
-            //binding the graphics pipeline
-            graphicsCommandBuffer[frameIndex].bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
-            //binding the vertexbuffer
-            graphicsCommandBuffer[frameIndex].bindVertexBuffers(0, *vertexBuffer, {0});
-            //command buffer dynamic state
-            graphicsCommandBuffer[frameIndex].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapchainExtent.width),static_cast<float>(swapchainExtent.height), 0.0f, 0.0f));
-            graphicsCommandBuffer[frameIndex].setScissor(0, vk::Rect2D(vk::Offset2D(0,0), swapchainExtent));
-            graphicsCommandBuffer[frameIndex].draw(vertices.size(), 1, 0, 0);
+            graphicsCommandBuffers[frameIndex].beginRendering(renderingInfo);
+                //binding the graphics pipeline
+                graphicsCommandBuffers[frameIndex].bindPipeline(vk::PipelineBindPoint::eGraphics, *graphicsPipeline);
+                //binding the vertexbuffer
+                graphicsCommandBuffers[frameIndex].bindVertexBuffers(0, *vertexBuffer, {0});
+                graphicsCommandBuffers[frameIndex].bindIndexBuffer(*indexBuffer, 0, vk::IndexType::eUint32);
+                //command buffer dynamic state
+                graphicsCommandBuffers[frameIndex].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapchainExtent.width),static_cast<float>(swapchainExtent.height), 0.0f, 0.0f));
+                graphicsCommandBuffers[frameIndex].setScissor(0, vk::Rect2D(vk::Offset2D(0,0), swapchainExtent));
+                graphicsCommandBuffers[frameIndex].drawIndexed(static_cast<uint32_t>(indecis.size()), 1, 0, 0, 0);
             //end rendering
-            graphicsCommandBuffer[frameIndex].endRendering();
+            graphicsCommandBuffers[frameIndex].endRendering();
             // After rendering, transition the swapchain image to vk::ImageLayout::ePresentSrcKHR
             transition_image_layout(
                 ImageIndex,
@@ -382,7 +414,7 @@ class HelloTriangleApplication {
                 vk::PipelineStageFlagBits2::eBottomOfPipe           // dstStage
             );
             
-            graphicsCommandBuffer[frameIndex].end();
+            graphicsCommandBuffers[frameIndex].end();
         }
         void transition_image_layout(uint32_t                imageIndex,
                                      vk::ImageLayout         old_layout,
@@ -413,7 +445,7 @@ class HelloTriangleApplication {
                                     vk::DependencyInfo dependency_info;
                                     dependency_info.setDependencyFlags({})
                                                    .setImageMemoryBarriers(barrier);
-                                    graphicsCommandBuffer[frameIndex].pipelineBarrier2(dependency_info);
+                                    graphicsCommandBuffers[frameIndex].pipelineBarrier2(dependency_info);
                                 }
 
         void createSyncObjects(){
@@ -604,7 +636,7 @@ class HelloTriangleApplication {
             }
             //Only reset the fence if we are submitting work
             device.resetFences(*inFlightFences[frameIndex]);
-            graphicsCommandBuffer[frameIndex].reset();
+            graphicsCommandBuffers[frameIndex].reset();
             recordCommandBuffer(imageIndex);
 
             uint64_t signalValue = ++frameCount;
@@ -624,7 +656,7 @@ class HelloTriangleApplication {
               vk::SubmitInfo info;
               info.setWaitSemaphores(*presentCompleteSemaphores[frameIndex])
                   .setWaitDstStageMask(waitDestinationStageMask)
-                  .setCommandBuffers(*graphicsCommandBuffer[frameIndex])
+                  .setCommandBuffers(*graphicsCommandBuffers[frameIndex])
                   .setSignalSemaphores(signalSemaphores)
                   .setPNext(&timelineSubmitInfo);
               return info;
