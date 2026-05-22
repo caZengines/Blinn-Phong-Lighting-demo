@@ -1,3 +1,8 @@
 This program follows the learning objectives outlined in docs.vulkan.org.
-#
-(*Based on* **Cpp 20**. & *The current chapter is* [Vertex Buffer](https://docs.vulkan.org/tutorial/latest/04_Vertex_buffers/00_Vertex_input_description.html))
+##
+(*Based on* **Cpp 20**. & *The current chapter is* [Uniform Buffer](https://docs.vulkan.org/tutorial/latest/05_Uniform_buffers/00_Descriptor_set_layout_and_buffer.html))
+
+### Introduction
+> *The engines don’t move the ship at all. The ship stays where it is and the engines move the universe around it.*
+> 
+> *Futurama*

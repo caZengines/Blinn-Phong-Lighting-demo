@@ -3,6 +3,13 @@ struct VertexInPut {
     float3 inColor;
 }
 
+struct UniformBuffer {
+    float4x4 model;
+    float4x4 view;
+    float4x4 proj;
+};
+ConstantBuffer<UniformBuffer> ubo;
+
 struct VertexOutput {
     float3 color;
     float4 pos : SV_Position;
@@ -12,7 +19,7 @@ struct VertexOutput {
 VertexOutput vertMain(VertexInPut InPut) {
     VertexOutput Output;
     Output.color = InPut.inColor;
-    Output.pos = float4(InPut.inPosition, 0.0, 1.0);
+    Output.pos = mul(ubo.proj, mul(ubo.view, mul(ubo.model, float4(InPut.inPosition, 0.0, 1.0))));
 
     return Output;
 }
