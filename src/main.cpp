@@ -1,4 +1,3 @@
-#include "vulkan/vulkan.hpp"
 #include <iostream>
 #include <stdexcept>
 #include <cassert>
@@ -73,7 +72,7 @@ const std::vector<Vertex> vertices = {
     {{-0.5f, 0.5f},{1.0f, 1.0f, 1.0f}}
 };
 
-const std::vector<uint32_t> indecis = {
+const std::vector<uint32_t> indices = {
     0, 1, 2, 2, 3, 0
 };
 
@@ -390,7 +389,7 @@ class HelloTriangleApplication {
         }
 
         void createIndexBuffer(){
-            vk::DeviceSize BufferSize = sizeof(indecis[0]) * indecis.size();
+            vk::DeviceSize BufferSize = sizeof(indices[0]) * indices.size();
             auto [stagingBuffer, stagingBufferMemory] = 
                         createBuffer(
                                      BufferSize,
@@ -398,7 +397,7 @@ class HelloTriangleApplication {
                                      vk::MemoryPropertyFlagBits::eHostCoherent | vk::MemoryPropertyFlagBits::eHostVisible
             );
             void* dataStaging = stagingBufferMemory.mapMemory(0, BufferSize);
-            memcpy(dataStaging, indecis.data(), (size_t)BufferSize);
+            memcpy(dataStaging, indices.data(), (size_t)BufferSize);
             stagingBufferMemory.unmapMemory();
 
             std::tie(indexBuffer, indexBufferMemory) = 
@@ -476,7 +475,7 @@ class HelloTriangleApplication {
                 graphicsCommandBuffers[frameIndex].setViewport(0, vk::Viewport(0.0f, 0.0f, static_cast<float>(swapchainExtent.width),static_cast<float>(swapchainExtent.height), 0.0f, 1.0f));
                 graphicsCommandBuffers[frameIndex].setScissor(0, vk::Rect2D(vk::Offset2D(0,0), swapchainExtent));
                 graphicsCommandBuffers[frameIndex].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[frameIndex], nullptr);
-                graphicsCommandBuffers[frameIndex].drawIndexed(static_cast<uint32_t>(indecis.size()), 1, 0, 0, 0);
+                graphicsCommandBuffers[frameIndex].drawIndexed(static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
             //end rendering
             graphicsCommandBuffers[frameIndex].endRendering();
             // After rendering, transition the swapchain image to vk::ImageLayout::ePresentSrcKHR
@@ -697,8 +696,6 @@ class HelloTriangleApplication {
                 return;
             }
             else if(result  != vk::Result::eSuccess && result != vk::Result::eSuboptimalKHR){
-              assert(result == vk::Result::eTimeout ||
-                     result == vk::Result::eNotReady);
               throw std::runtime_error("failed to acquire swap chain image!");
             }
 
