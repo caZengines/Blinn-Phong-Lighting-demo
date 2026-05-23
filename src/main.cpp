@@ -208,11 +208,9 @@ class HelloTriangleApplication {
             vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
             //dynamic state
-            vk::Viewport viewport(0.0f, 0.0f, static_cast<float>(swapchainExtent.width), static_cast<float>(swapchainExtent.height));
-            vk::Rect2D scissor {vk::Offset2D{0, 0}, swapchainExtent};
-
             std::vector<vk::DynamicState> dynamicStates = {
-                vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+                vk::DynamicState::eViewport, vk::DynamicState::eScissor
+            };
             vk::PipelineDynamicStateCreateInfo dynamicState;
             dynamicState.setDynamicStateCount(static_cast<uint32_t>(dynamicStates.size()))
                         .setPDynamicStates(dynamicStates.data());
