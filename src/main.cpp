@@ -397,6 +397,17 @@ class HelloTriangleApplication {
             endSingleTimeCommands(std::move(commandCopyBuffer));
         }
 
+        void copyBufferToImage(vk::raii::CommandBuffer &commandBuffer, const vk::raii::Buffer &buffer, vk::raii::Image &image, uint32_t width, uint32_t height){
+            vk::BufferImageCopy region;
+            vk::ImageSubresourceLayers imageSubresource;imageSubresource.setAspectMask(vk::ImageAspectFlagBits::eColor).setBaseArrayLayer(0).setLayerCount(1).setMipLevel(0);
+            region.setBufferOffset(0).setBufferImageHeight(0).setBufferRowLength(0)
+                  .setImageOffset({0,0,0})
+                  .setImageExtent({width, height, 1})
+                  .setImageSubresource(imageSubresource);
+
+            commandBuffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, region);
+        }
+
         void createTextureImage(){
             int            texWidth, texHeight, texChannel;
             stbi_uc       *pixels = stbi_load("../textures/avatar.jpg", &texWidth, &texHeight, &texChannel, STBI_rgb_alpha);
@@ -427,6 +438,11 @@ class HelloTriangleApplication {
                             vk::SharingMode::eConcurrent,
                             {graphicsQueueIndex, transferQueueIndex}
             );
+            vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands();
+            transitionImageLayout(commandBuffer, textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
+            copyBufferToImage(commandBuffer, stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+            transitionImageLayout(commandBuffer, textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+            endSingleTimeCommands(std::move(commandBuffer));
         }
 
         void createVertexBuffer(){
@@ -594,7 +610,35 @@ class HelloTriangleApplication {
                                     dependency_info.setDependencyFlags({})
                                                    .setImageMemoryBarriers(barrier);
                                     graphicsCommandBuffers[frameIndex].pipelineBarrier2(dependency_info);
-                                }
+        }
+        void transitionImageLayout(vk::raii::CommandBuffer &commandBuffer, const vk::raii::Image &image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout){
+            vk::ImageMemoryBarrier barrier;
+            vk::ImageSubresourceRange subresourceRange;
+            subresourceRange.setAspectMask(vk::ImageAspectFlagBits::eColor).setLayerCount(1).setLevelCount(1);
+            barrier.setOldLayout(oldLayout).setNewLayout(newLayout)
+                   .setSrcQueueFamilyIndex(vk::QueueFamilyIgnored).setDstQueueFamilyIndex(vk::QueueFamilyIgnored)
+                   .setImage(image).setSubresourceRange(subresourceRange);
+            vk::PipelineStageFlags sourceStage;
+            vk::PipelineStageFlags destinationStage;
+            if (oldLayout == vk::ImageLayout::eUndefined && newLayout == vk::ImageLayout::eTransferDstOptimal){
+                barrier.srcAccessMask = {};
+                barrier.dstAccessMask = vk::AccessFlagBits::eTransferWrite;
+
+                sourceStage      = vk::PipelineStageFlagBits::eTopOfPipe;
+                destinationStage = vk::PipelineStageFlagBits::eTransfer;
+            }
+            else if (oldLayout == vk::ImageLayout::eTransferDstOptimal && newLayout == vk::ImageLayout::eShaderReadOnlyOptimal){
+                barrier.srcAccessMask = vk::AccessFlagBits::eTransferWrite; //wait for "transferWrite opearation" to complete.
+                barrier.dstAccessMask = vk::AccessFlagBits::eShaderRead; // make the shader able to read visible data.
+
+                sourceStage      = vk::PipelineStageFlagBits::eTransfer; //wait for transfer stage to complete all access.
+                destinationStage = vk::PipelineStageFlagBits::eFragmentShader; //if the transfer stage completes, the process can move to the fragment shader stage.
+            }
+            else{
+                throw std::invalid_argument("unsupported layout transition!");
+            }
+            commandBuffer.pipelineBarrier(sourceStage, destinationStage, {}, {}, nullptr, barrier);
+        }
 
         void createSyncObjects(){
             assert(presentWaitSemaphores.empty() && presentCompleteSemaphores.empty() && inFlightFences.empty());
