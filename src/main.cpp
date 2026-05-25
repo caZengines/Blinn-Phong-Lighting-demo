@@ -118,7 +118,9 @@ class HelloTriangleApplication {
         vk::raii::Buffer                         indexBuffer          = nullptr;
         vk::raii::DeviceMemory                   indexBufferMemory    = nullptr;
         vk::raii::Image                          textureImage         = nullptr;
-        vk::raii::DeviceMemory                   textureImageMemory   = nullptr; 
+        vk::raii::DeviceMemory                   textureImageMemory   = nullptr;
+        vk::raii::ImageView                      textureImageView     = nullptr;
+        vk::raii::Sampler                        textureSampler       = nullptr;
 
         std::vector<vk::raii::Buffer>            uniformBuffers;
         std::vector<vk::raii::DeviceMemory>      uniformBuffersMemory;
@@ -165,6 +167,8 @@ class HelloTriangleApplication {
             createGraphicsPipeline();
             createCommandPools();
             createTextureImage();
+            createTextureImageView();
+            createTextureSampler();
             createVertexBuffer();
             createIndexBuffer();
             createUniformBuffers();
@@ -176,14 +180,9 @@ class HelloTriangleApplication {
 
         void createImageViews(){
             assert(swapchainImageViews.empty());
-            for(auto image : swapchainImages){
-                vk::ImageViewCreateInfo imageViewCreateInfo;
-                imageViewCreateInfo.setViewType(vk::ImageViewType::e2D)
-                                   .setFormat(swapchainSurfaceFormat.format)
-                                   .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1})
-                                   .setImage(image);
-                
-                swapchainImageViews.emplace_back(device, imageViewCreateInfo);
+            swapchainImageViews.reserve(swapchainImages.size());
+            for(auto &image : swapchainImages){         
+                swapchainImageViews.emplace_back(createImageView(image, swapchainSurfaceFormat.format));
             }
         }
 
@@ -443,6 +442,33 @@ class HelloTriangleApplication {
             endSingleTimeCommands(std::move(commandBuffer), std::move(graphicsQueue));
         }
 
+        void createTextureImageView(){
+            textureImageView = createImageView(*textureImage, vk::Format::eR8G8B8A8Srgb);
+        }
+
+        vk::raii::ImageView createImageView(vk::Image const &image, vk::Format format){
+            vk::ImageViewCreateInfo viewInfo;
+            viewInfo.setImage(image)
+                    .setFormat(format)
+                    .setViewType(vk::ImageViewType::e2D)
+                    .setSubresourceRange({vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+            return vk::raii::ImageView(device, viewInfo);
+        }
+
+        void createTextureSampler(){
+            vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
+            vk::SamplerCreateInfo samplerInfo;
+            samplerInfo.setMagFilter(vk::Filter::eLinear).setMinFilter(vk::Filter::eLinear)
+                       .setAddressModeU(vk::SamplerAddressMode::eRepeat).setAddressModeV(vk::SamplerAddressMode::eRepeat).setAddressModeW(vk::SamplerAddressMode::eRepeat)
+                       .setMipmapMode(vk::SamplerMipmapMode::eLinear).setMipLodBias(0.0f).setMaxLod(0.0f).setMinLod(0.0f)
+                       .setAnisotropyEnable(vk::True)
+                       .setMaxAnisotropy(properties.limits.maxSamplerAnisotropy)
+                       .setCompareEnable(false).setCompareOp(vk::CompareOp::eAlways)
+                       .setUnnormalizedCoordinates(vk::False)
+                       .setBorderColor(vk::BorderColor::eIntOpaqueBlack);
+            textureSampler = vk::raii::Sampler(device, samplerInfo);
+        }
+
         void createVertexBuffer(){
             vk::DeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
             auto [stagingBuffer, stagingBufferMemory] = 
@@ -676,9 +702,10 @@ class HelloTriangleApplication {
 
             // Check if the physicalDevice supports the required features (dynamic rendering and extended dynamic state)
             auto features =
-                physicalDevice
-                    .template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
-            bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
+                physicalDevice.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+            bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy &&
+                                            features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
+                                            features.template get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
                                             features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
 
             // Return true if the physicalDevice meets all the criteria
@@ -981,12 +1008,13 @@ class HelloTriangleApplication {
             auto& deviceFeatures2 = featureChain.get<vk::PhysicalDeviceFeatures2>();
             deviceFeatures2.features.setFillModeNonSolid(true);
             deviceFeatures2.features.setGeometryShader(false);
+            deviceFeatures2.features.setSamplerAnisotropy(true);
 
-            featureChain.get<vk::PhysicalDeviceVulkan13Features>().setDynamicRendering(true);  // vk::PhysicalDeviceVulkan13Features
+            featureChain.get<vk::PhysicalDeviceVulkan13Features>().setDynamicRendering(true);
             featureChain.get<vk::PhysicalDeviceVulkan13Features>().setSynchronization2(true);
-            featureChain.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().setExtendedDynamicState(true);  // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
+            featureChain.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().setExtendedDynamicState(true);
             featureChain.get<vk::PhysicalDeviceShaderDrawParametersFeatures>().setShaderDrawParameters(true);
-            featureChain.get<vk::PhysicalDeviceTimelineSemaphoreFeaturesKHR>().setTimelineSemaphore(true); //vk::PhysicalDeviceTimelineSemaphoreFeaturesKHR
+            featureChain.get<vk::PhysicalDeviceTimelineSemaphoreFeaturesKHR>().setTimelineSemaphore(true);
             //Create graphic & transfer queue
             std::vector<const char *> requiredDeviceExtension = {vk::KHRSwapchainExtensionName};
             std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos;
