@@ -1,5 +1,5 @@
 struct VertexInPut {
-    float2 inPosition;
+    float3 inPosition;
     float2 inTexCoord;
 };
 
@@ -18,7 +18,7 @@ struct VertexOutput {
 [shader("vertex")]
 VertexOutput vertMain(VertexInPut InPut) {
     VertexOutput Output;
-    Output.pos = mul(ubo.proj, mul(ubo.view, mul(ubo.model, float4(InPut.inPosition, 0.0, 1.0))));
+    Output.pos = mul(ubo.proj, mul(ubo.view, mul(ubo.model, float4(InPut.inPosition, 1.0))));
     Output.fragTexCoord = InPut.inTexCoord;
 
     return Output;
@@ -28,6 +28,5 @@ Sampler2D texture;
 
 [shader("fragment")]
 float4 fragMain(VertexOutput inVert) : SV_Target {
-
     return texture.Sample(inVert.fragTexCoord);
 }
