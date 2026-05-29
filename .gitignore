@@ -2,7 +2,7 @@
 build*/
 cmake-build*/
 bin*/
-
+shaders/slang.spv
 
 CMakeCache.txt
 CMakeFiles
@@ -16,4 +16,3 @@ _deps
 CMakeUserPresets.json
 .ninja_deps
 .ninja_log
-shaders/slang.spv
