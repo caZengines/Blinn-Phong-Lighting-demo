@@ -1,4 +1,5 @@
 #include "vulkan/vulkan.hpp"
+#include <cstddef>
 #include <iostream>
 #include <stdexcept>
 #include <cassert>
@@ -37,6 +38,7 @@ constexpr uint32_t WIDTH = 1920;
 constexpr uint32_t HEIGHT = 1080;
 const std::string MODEL_PATH = "../models/container.obj";
 const std::string TEXTURE_PATH = "../textures/container.png";
+const std::string NORMAL_PATH  = "../textures/container_normal_OpenGL.png";
 
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -53,6 +55,14 @@ constexpr bool enableValidationLayers = true;
 struct Vertex {
     glm::vec3 pos;
     glm::vec2 texCoord;
+    uint8_t   normal[4];
+
+    void setNormal(const glm::vec3& n) {
+        normal[0] = static_cast<int8_t>(glm::round(glm::clamp(n.x, -1.0f, 1.0f) * 127.0f));
+        normal[1] = static_cast<int8_t>(glm::round(glm::clamp(n.y, -1.0f, 1.0f) * 127.0f));
+        normal[2] = static_cast<int8_t>(glm::round(glm::clamp(n.z, -1.0f, 1.0f) * 127.0f));
+        normal[3] = 0;
+    }
 
     static vk::VertexInputBindingDescription getBindingDescription() {
         vk::VertexInputBindingDescription description;
@@ -60,30 +70,40 @@ struct Vertex {
 
         return description;
     }
-    static std::array<vk::VertexInputAttributeDescription, 2> getAttributeDescription() {
+    static std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescription() {
         vk::VertexInputAttributeDescription posAttribute;
         posAttribute.setLocation(0).setFormat(vk::Format::eR32G32B32Sfloat).setOffset(offsetof(Vertex, pos));
         vk::VertexInputAttributeDescription uvAttribute;
         uvAttribute.setLocation(1).setFormat(vk::Format::eR32G32Sfloat).setOffset(offsetof(Vertex, texCoord));
+        vk::VertexInputAttributeDescription norAttribute;
+        norAttribute.setLocation(2).setFormat(vk::Format::eR8G8B8A8Snorm).setOffset(offsetof(Vertex, normal));
 
-        return {posAttribute, uvAttribute};
+        return {posAttribute, uvAttribute, norAttribute};
     }
     bool operator==(const Vertex& other) const {
-        return pos == other.pos && texCoord == other.texCoord;
+        return pos == other.pos && texCoord == other.texCoord && normal[0] == other.normal[0] && normal[1] == other.normal[1] && normal[2] == other.normal[2];
     }
 };
 namespace std{
     template<> struct hash<Vertex>{
         size_t operator()(Vertex const& vertex) const {
-            return (hash<glm::vec3>()(vertex.pos) ^ (hash<glm::vec2>()(vertex.texCoord) << 1));
+            return (((hash<glm::vec3>()(vertex.pos) ^ (hash<uint8_t>()(vertex.normal[0]) << 1)) >> 1) ^ (hash<glm::vec2>()(vertex.texCoord) << 1));
         }
     };
 }
+
+struct Light {
+    alignas(16) glm::vec4 pos;
+    alignas(16) glm::vec4 color;
+    alignas(16)  float     intensity;
+};
 
 struct UniformBufferObject {
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
     alignas(16) glm::mat4 proj;
+    alignas(16) glm::vec4 camPos;
+    alignas(16) Light     light;
 };
 
 class HelloTriangleApplication {
@@ -129,10 +149,17 @@ class HelloTriangleApplication {
         std::unordered_map<Vertex, uint32_t>     uniqueVertices{};
         
         uint32_t                                 mipLevels;
+        uint32_t                                 normipLevels;
         vk::raii::Image                          textureImage         = nullptr;
         vk::raii::DeviceMemory                   textureImageMemory   = nullptr;
         vk::raii::ImageView                      textureImageView     = nullptr;
         vk::raii::Sampler                        textureSampler       = nullptr;
+
+        vk::raii::Image                          normalImage          = nullptr;
+        vk::raii::DeviceMemory                   normalImageMemory    = nullptr;
+        vk::raii::ImageView                      normalImageView      = nullptr;
+        vk::raii::Sampler                        normalSampler        = nullptr;
+
         vk::raii::Image                          depthImage           = nullptr;
         vk::raii::DeviceMemory                   depthImageMemory     = nullptr;
         vk::raii::ImageView                      depthImageView       = nullptr;
@@ -191,6 +218,9 @@ class HelloTriangleApplication {
             createTextureImage();
             createTextureImageView();
             createTextureSampler();
+            createNormalImage();
+            createNormalImageView();
+            createNormalSampler();
             loadModel();
             createVertexBuffer();
             createIndexBuffer();
@@ -210,9 +240,10 @@ class HelloTriangleApplication {
         }
 
         void createDescriptorSetLayout(){
-            std::array<vk::DescriptorSetLayoutBinding, 2> bindings{
-                vk::DescriptorSetLayoutBinding().setBinding(0).setDescriptorType(vk::DescriptorType::eUniformBuffer).setDescriptorCount(1).setStageFlags(vk::ShaderStageFlagBits::eVertex),
-                vk::DescriptorSetLayoutBinding().setBinding(1).setDescriptorType(vk::DescriptorType::eCombinedImageSampler).setDescriptorCount(1).setStageFlags(vk::ShaderStageFlagBits::eFragment)
+            std::array<vk::DescriptorSetLayoutBinding, 3> bindings{
+                vk::DescriptorSetLayoutBinding().setBinding(0).setDescriptorType(vk::DescriptorType::eUniformBuffer).setDescriptorCount(1).setStageFlags(vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment),
+                vk::DescriptorSetLayoutBinding().setBinding(1).setDescriptorType(vk::DescriptorType::eCombinedImageSampler).setDescriptorCount(1).setStageFlags(vk::ShaderStageFlagBits::eFragment),
+                vk::DescriptorSetLayoutBinding().setBinding(2).setDescriptorType(vk::DescriptorType::eCombinedImageSampler).setDescriptorCount(1).setStageFlags(vk::ShaderStageFlagBits::eFragment)
             };
             vk::DescriptorSetLayoutCreateInfo layoutInfo;
             layoutInfo.setBindings(bindings);
@@ -331,7 +362,7 @@ class HelloTriangleApplication {
         void createDescriptorPool(){
             std::array<vk::DescriptorPoolSize, 2> poolSize{
                 vk::DescriptorPoolSize().setType(vk::DescriptorType::eUniformBuffer).setDescriptorCount(MAX_FRAMES_IN_FLIGHT),
-                vk::DescriptorPoolSize().setType(vk::DescriptorType::eCombinedImageSampler).setDescriptorCount(MAX_FRAMES_IN_FLIGHT)
+                vk::DescriptorPoolSize().setType(vk::DescriptorType::eCombinedImageSampler).setDescriptorCount(MAX_FRAMES_IN_FLIGHT * 2)
             };
             vk::DescriptorPoolCreateInfo poolInfo;
             poolInfo.setFlags(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet).setMaxSets(MAX_FRAMES_IN_FLIGHT).setPoolSizes(poolSize);
@@ -351,10 +382,13 @@ class HelloTriangleApplication {
                 bufferInfo.setBuffer(uniformBuffers[i]).setOffset(0).setRange(sizeof(UniformBufferObject));
                 vk::DescriptorImageInfo imageInfo;
                 imageInfo.setSampler(textureSampler).setImageView(textureImageView).setImageLayout(vk::ImageLayout::eShaderReadOnlyOptimal);
+                vk::DescriptorImageInfo normalInfo;
+                normalInfo.setSampler(normalSampler).setImageView(normalImageView).setImageLayout(vk::ImageLayout::eShaderReadOnlyOptimal);
 
-                std::array<vk::WriteDescriptorSet, 2> descriptorWrites{
+                std::array<vk::WriteDescriptorSet, 3> descriptorWrites{
                     vk::WriteDescriptorSet().setDstSet(descriptorSets[i]).setDstBinding(0).setDstArrayElement(0).setDescriptorType(vk::DescriptorType::eUniformBuffer).setBufferInfo(bufferInfo),
-                    vk::WriteDescriptorSet().setDstSet(descriptorSets[i]).setDstBinding(1).setDstArrayElement(0).setDescriptorType(vk::DescriptorType::eCombinedImageSampler).setImageInfo(imageInfo)
+                    vk::WriteDescriptorSet().setDstSet(descriptorSets[i]).setDstBinding(1).setDstArrayElement(0).setDescriptorType(vk::DescriptorType::eCombinedImageSampler).setImageInfo(imageInfo),
+                    vk::WriteDescriptorSet().setDstSet(descriptorSets[i]).setDstBinding(2).setDstArrayElement(0).setDescriptorType(vk::DescriptorType::eCombinedImageSampler).setImageInfo(normalInfo)
                 };
 
                 device.updateDescriptorSets(descriptorWrites, {});
@@ -569,10 +603,64 @@ class HelloTriangleApplication {
                        .setMipLodBias(0.0f).setMaxLod(vk::LodClampNone).setMinLod(0.0f)
                        .setAnisotropyEnable(vk::True)
                        .setMaxAnisotropy(properties.limits.maxSamplerAnisotropy)
-                       .setCompareEnable(false).setCompareOp(vk::CompareOp::eAlways)
+                       .setCompareEnable(vk::False).setCompareOp(vk::CompareOp::eAlways)
                        .setUnnormalizedCoordinates(vk::False)
                        .setBorderColor(vk::BorderColor::eIntOpaqueBlack);
             textureSampler = vk::raii::Sampler(device, samplerInfo);
+        }
+
+        void createNormalImage(){
+            int norWidth, norHeight, norChannel;
+            stbi_uc *pixels = stbi_load(NORMAL_PATH.c_str(), &norWidth, &norHeight, &norChannel, STBI_rgb_alpha);
+            vk::DeviceSize imageSize = norWidth * norHeight * 4;
+            normipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(norWidth, norHeight)))) +1;
+            if(!pixels){
+                throw std::runtime_error("failed to load normal image! ");
+            }
+            auto [stagingBuffer, stagingBufferMemory] = 
+                    createBuffer(imageSize,
+                                vk::BufferUsageFlagBits::eTransferSrc,
+                                vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent,
+                                vk::SharingMode::eExclusive
+            );
+            void* data = stagingBufferMemory.mapMemory(0, imageSize);
+            memcpy(data, pixels, imageSize);
+            stagingBufferMemory.unmapMemory();
+            stbi_image_free(pixels);
+
+            std::tie(normalImage, normalImageMemory) = 
+                       createImage(
+                                    norWidth, norHeight, mipLevels, vk::SampleCountFlagBits::e1,
+                                    vk::Format::eR8G8B8A8Unorm,
+                                    vk::ImageTiling::eOptimal,
+                                    vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+                                    vk::MemoryPropertyFlagBits::eDeviceLocal
+            );
+            vk::raii::CommandBuffer commandBuffer = beginSingleTimeCommands(graphicsCommandPool);
+            transitionImageLayout(commandBuffer, normalImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, normipLevels);
+            copyBufferToImage(commandBuffer, stagingBuffer, normalImage, static_cast<uint32_t>(norWidth), static_cast<uint32_t>(norHeight));
+            endSingleTimeCommands(std::move(commandBuffer), graphicsQueue);
+            //transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating mipmaps
+            generateMipMaps(normalImage, vk::Format::eR8G8B8A8Unorm, norWidth, norHeight, normipLevels);
+        }
+
+        void createNormalImageView(){
+            normalImageView = createImageView(*normalImage, vk::Format::eR8G8B8A8Unorm, vk::ImageAspectFlagBits::eColor, normipLevels);
+        }
+
+        void createNormalSampler(){
+            vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
+            vk::SamplerCreateInfo samplerInfo;
+            samplerInfo.setMagFilter(vk::Filter::eLinear).setMinFilter(vk::Filter::eLinear)
+                        .setAddressModeU(vk::SamplerAddressMode::eRepeat).setAddressModeV(vk::SamplerAddressMode::eRepeat).setAddressModeW(vk::SamplerAddressMode::eRepeat)
+                        .setMipmapMode(vk::SamplerMipmapMode::eLinear)
+                        .setMipLodBias(0.0f).setMaxLod(vk::LodClampNone).setMinLod(0.0f)
+                        .setAnisotropyEnable(vk::True)
+                        .setMaxAnisotropy(properties.limits.maxSamplerAnisotropy)
+                        .setCompareEnable(vk::False).setCompareOp(vk::CompareOp::eAlways)
+                        .setUnnormalizedCoordinates(vk::False)
+                        .setBorderColor(vk::BorderColor::eIntOpaqueBlack);
+            normalSampler = vk::raii::Sampler(device, samplerInfo);
         }
 
         void loadModel(){
@@ -597,6 +685,12 @@ class HelloTriangleApplication {
                         attrib.texcoords[2 * index.texcoord_index + 0],
                         1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
                     };
+                    vertex.setNormal({
+                        attrib.normals[3 * index.normal_index + 0],
+                        attrib.normals[3 * index.normal_index + 1],
+                        attrib.normals[3 * index.normal_index + 2]
+                        }
+                    );
                     auto [it, inserted] = uniqueVertices.insert({vertex, static_cast<uint32_t>(vertices.size())});
                     if(inserted){
                         vertices.emplace_back(vertex);
@@ -1097,6 +1191,11 @@ class HelloTriangleApplication {
             ubo.proj =
                     glm::perspective(glm::radians(45.0f), static_cast<float>(swapchainExtent.width) /static_cast<float>(swapchainExtent.height) , 0.1f, 100.0f);
             ubo.proj[1][1] *= -1;
+
+            ubo.camPos = glm::vec4(2.0f, 2.0f, 2.0f, 1);
+            ubo.light.pos = glm::vec4(0.0f, 3.0f, 0.0f, 1);
+            ubo.light.color = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+            ubo.light.intensity = 0.7f;
 
             memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
         }
