@@ -63,6 +63,7 @@ struct Vertex {
     glm::vec3 pos;
     glm::vec2 texCoord;
     uint8_t   normal[4];
+    uint8_t   tangent[4];
 
     void setNormal(const glm::vec3& n) {
         normal[0] = static_cast<int8_t>(glm::round(glm::clamp(n.x, -1.0f, 1.0f) * 127.0f));
@@ -71,24 +72,41 @@ struct Vertex {
         normal[3] = 0;
     }
 
+    void setTangent(const glm::vec3& deltaPos1_, const glm::vec3& deltaPos2_, const glm::vec2& deltaUV1_, const glm::vec2& deltaUV2_, const glm::vec3& n) {
+        float r = 1.0f / (deltaUV1_.x * deltaUV2_.y - deltaUV1_.y * deltaUV2_.x);
+        glm::vec3 tan = (deltaPos1_ * deltaUV2_.y - deltaPos2_ * deltaUV1_.y) * r;
+        tan = glm::normalize(tan - n * glm::dot(tan, n));
+
+        glm::vec3 bitan = (deltaPos2_ * deltaUV1_.x - deltaPos1_ * deltaUV2_.x) * r;
+        int8_t handedness = (glm::dot(glm::cross(n, tan), bitan) >= 0.0f) ? 1 : -1;
+
+        tangent[0] = static_cast<int8_t>(glm::round(glm::clamp(tan.x, -1.0f, 1.0f) * 127.0f));
+        tangent[1] = static_cast<int8_t>(glm::round(glm::clamp(tan.y, -1.0f, 1.0f) * 127.0f));
+        tangent[2] = static_cast<int8_t>(glm::round(glm::clamp(tan.z, -1.0f, 1.0f) * 127.0f));
+        tangent[3] = static_cast<int8_t>(handedness * 127);
+    }
+
     static vk::VertexInputBindingDescription getBindingDescription() {
         vk::VertexInputBindingDescription description;
         description.setBinding(0).setStride(sizeof(Vertex)).setInputRate(vk::VertexInputRate::eVertex);
 
         return description;
     }
-    static std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescription() {
+    static std::array<vk::VertexInputAttributeDescription, 4> getAttributeDescription() {
         vk::VertexInputAttributeDescription posAttribute;
         posAttribute.setLocation(0).setFormat(vk::Format::eR32G32B32Sfloat).setOffset(offsetof(Vertex, pos));
         vk::VertexInputAttributeDescription uvAttribute;
         uvAttribute.setLocation(1).setFormat(vk::Format::eR32G32Sfloat).setOffset(offsetof(Vertex, texCoord));
         vk::VertexInputAttributeDescription norAttribute;
         norAttribute.setLocation(2).setFormat(vk::Format::eR8G8B8A8Snorm).setOffset(offsetof(Vertex, normal));
+        vk::VertexInputAttributeDescription tanAttribute;
+        tanAttribute.setLocation(3).setFormat(vk::Format::eR8G8B8A8Snorm).setOffset(offsetof(Vertex, tangent));
 
-        return {posAttribute, uvAttribute, norAttribute};
+        return {posAttribute, uvAttribute, norAttribute, tanAttribute};
     }
     bool operator==(const Vertex& other) const {
-        return pos == other.pos && texCoord == other.texCoord && normal[0] == other.normal[0] && normal[1] == other.normal[1] && normal[2] == other.normal[2];
+        return pos == other.pos && texCoord == other.texCoord && normal[0] == other.normal[0] && normal[1] == other.normal[1] && normal[2] == other.normal[2]
+            && tangent[0] == other.tangent[0] && tangent[1] == other.tangent[1] && tangent[2] == other.tangent[2];
     }
 };
 namespace std{
@@ -109,6 +127,7 @@ struct UniformBufferObject {
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
     alignas(16) glm::mat4 proj;
+
     alignas(16) glm::vec4 camPos;
     alignas(16) Light     light;
 };
@@ -664,7 +683,7 @@ class HelloTriangleApplication {
 
             std::tie(normalImage, normalImageMemory) = 
                        createImage(
-                                    norWidth, norHeight, mipLevels, vk::SampleCountFlagBits::e1,
+                                    norWidth, norHeight, normipLevels, vk::SampleCountFlagBits::e1,
                                     vk::Format::eR8G8B8A8Unorm,
                                     vk::ImageTiling::eOptimal,
                                     vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
@@ -686,7 +705,7 @@ class HelloTriangleApplication {
             vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
             vk::SamplerCreateInfo samplerInfo;
             samplerInfo.setMagFilter(vk::Filter::eLinear).setMinFilter(vk::Filter::eLinear)
-                        .setAddressModeU(vk::SamplerAddressMode::eRepeat).setAddressModeV(vk::SamplerAddressMode::eRepeat).setAddressModeW(vk::SamplerAddressMode::eRepeat)
+                        .setAddressModeU(vk::SamplerAddressMode::eClampToEdge).setAddressModeV(vk::SamplerAddressMode::eClampToEdge).setAddressModeW(vk::SamplerAddressMode::eClampToEdge)
                         .setMipmapMode(vk::SamplerMipmapMode::eLinear)
                         .setMipLodBias(0.0f).setMaxLod(vk::LodClampNone).setMinLod(0.0f)
                         .setAnisotropyEnable(vk::True)
@@ -730,6 +749,37 @@ class HelloTriangleApplication {
                         vertices.emplace_back(vertex);
                     }
                     indices.emplace_back(it->second);
+                }
+                for(size_t f = 0 ; f < indices.size()/3 ; ++f){
+                    uint32_t idx0 = indices[3 * f + 0]; const auto& i0 = shape.mesh.indices[3 * f + 0];
+                    uint32_t idx1 = indices[3 * f + 1]; const auto& i1 = shape.mesh.indices[3 * f + 1];
+                    uint32_t idx2 = indices[3 * f + 2]; const auto& i2 = shape.mesh.indices[3 * f + 2];
+                    
+                    glm::vec3 n0 = {attrib.normals[3 * i0.normal_index + 0], attrib.normals[3 * i0.normal_index + 1], attrib.normals[3 * i0.normal_index + 2]};
+                    glm::vec3 n1 = {attrib.normals[3 * i1.normal_index + 0], attrib.normals[3 * i1.normal_index + 1], attrib.normals[3 * i1.normal_index + 2]};
+                    glm::vec3 n2 = {attrib.normals[3 * i2.normal_index + 0], attrib.normals[3 * i2.normal_index + 1], attrib.normals[3 * i2.normal_index + 2]};
+
+                    glm::vec3 deltaPos1 = {
+                        attrib.vertices[3 * i1.vertex_index + 0] - attrib.vertices[3 * i0.vertex_index + 0],
+                        attrib.vertices[3 * i1.vertex_index + 1] - attrib.vertices[3 * i0.vertex_index + 1],
+                        attrib.vertices[3 * i1.vertex_index + 2] - attrib.vertices[3 * i0.vertex_index + 2]
+                    };
+                    glm::vec3 deltaPos2 = {
+                        attrib.vertices[3 * i2.vertex_index + 0] - attrib.vertices[3 * i0.vertex_index + 0],
+                        attrib.vertices[3 * i2.vertex_index + 1] - attrib.vertices[3 * i0.vertex_index + 1],
+                        attrib.vertices[3 * i2.vertex_index + 2] - attrib.vertices[3 * i0.vertex_index + 2]
+                    };
+                    glm::vec2 deltaUV1 = {
+                        attrib.texcoords[2 * i1.texcoord_index + 0] - attrib.texcoords[2 * i0.texcoord_index + 0],
+                        attrib.texcoords[2 * i1.texcoord_index + 1] - attrib.texcoords[2 * i0.texcoord_index + 1]
+                    };
+                    glm::vec2 deltaUV2 = {
+                        attrib.texcoords[2 * i2.texcoord_index + 0] - attrib.texcoords[2 * i0.texcoord_index + 0],
+                        attrib.texcoords[2 * i2.texcoord_index + 1] - attrib.texcoords[2 * i0.texcoord_index + 1]
+                    };
+                    vertices[idx0].setTangent(deltaPos1, deltaPos2, deltaUV1, deltaUV2, n0);
+                    vertices[idx1].setTangent(deltaPos1, deltaPos2, deltaUV1, deltaUV2, n1);
+                    vertices[idx2].setTangent(deltaPos1, deltaPos2, deltaUV1, deltaUV2, n2);
                 }
             }
         }
