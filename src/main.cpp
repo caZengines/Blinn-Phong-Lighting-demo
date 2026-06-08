@@ -11,7 +11,6 @@
 #include <fstream>
 #include <map>
 #include <unordered_map>
-#include <chrono>
 
 #if defined(__INTELLISENSE__) || !defined(USE_CPP20_MODULES)
 #define VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS
@@ -39,6 +38,14 @@ constexpr uint32_t HEIGHT = 1080;
 const std::string MODEL_PATH = "../models/container.obj";
 const std::string TEXTURE_PATH = "../textures/container.png";
 const std::string NORMAL_PATH  = "../textures/container_normal_OpenGL.png";
+
+static float                                    camAzimuth       = glm::radians(45.0f);
+static float                                    camPolar         = glm::radians(45.0f);
+static float                                    camDistance      = 2.0f * sqrt(3);
+
+static bool                                     leftMousePressed = false;
+static double            lastMouseX  = 0.0,     lastMouseY       = 0.0;
+constexpr float                                 mouseSensitivity = 0.001f;
 
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -195,11 +202,38 @@ class HelloTriangleApplication {
             window = glfwCreateWindow(WIDTH, HEIGHT, "C' Vulkan", nullptr, nullptr);
             glfwSetWindowUserPointer(window, this);
             glfwSetFramebufferSizeCallback(window, glfwFramebufferResizeCallback);
+            glfwSetMouseButtonCallback(window, mouseButtonCallBack);
+            glfwSetCursorPosCallback(window, cursorPosCallBack);
         }
 
         static void glfwFramebufferResizeCallback(GLFWwindow* window, int width, int height){
             auto app                = static_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
             app->framebufferResized = true;
+        }
+
+        static void mouseButtonCallBack(GLFWwindow* window, int button, int action, int mods){
+            if(button == GLFW_MOUSE_BUTTON_LEFT){
+                if(action == GLFW_PRESS){
+                    leftMousePressed = true;
+                    glfwGetCursorPos(window, &lastMouseX, &lastMouseY);
+                }
+                else if(action == GLFW_RELEASE){
+                    leftMousePressed = false;
+                }
+            }
+        }
+        static void cursorPosCallBack(GLFWwindow* window, double xPos, double yPos){
+            if(!leftMousePressed) return;
+
+            double dx = xPos - lastMouseX; 
+            double dy = yPos - lastMouseY;
+            lastMouseX = xPos; lastMouseY = yPos;
+
+            camAzimuth -= dx * mouseSensitivity;
+            camPolar   += dy * mouseSensitivity;
+
+            const float polarEpsilon = 0.001f;
+            camPolar = glm::clamp(camPolar, polarEpsilon, glm::pi<float>() - polarEpsilon);
         }
 
         void initVulkan() {
@@ -1180,22 +1214,23 @@ class HelloTriangleApplication {
         }
 
         void updateUniformBuffer(uint32_t currentImage){
-            static auto startTime = std::chrono::high_resolution_clock::now();
+            float x = camDistance * sin(camPolar) * cos(camAzimuth);
+            float y = camDistance * sin(camPolar) * sin(camAzimuth);
+            float z = camDistance * cos(camPolar);
+            glm::vec3 eyePos(x, y, z);
 
-            auto currentTime = std::chrono::high_resolution_clock::now();
-            float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
             UniformBufferObject ubo{};
-            ubo.model = rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-            ubo.view = lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+            ubo.model = rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+            ubo.view = lookAt(eyePos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
             ubo.proj =
                     glm::perspective(glm::radians(45.0f), static_cast<float>(swapchainExtent.width) /static_cast<float>(swapchainExtent.height) , 0.1f, 100.0f);
             ubo.proj[1][1] *= -1;
 
-            ubo.camPos = glm::vec4(2.0f, 2.0f, 2.0f, 1);
-            ubo.light.pos = glm::vec4(0.0f, 3.0f, 0.0f, 1);
+            ubo.camPos = glm::vec4(eyePos, 1);
+            ubo.light.pos = glm::vec4(0.0f, 3.0f, 3.0f, 1);
             ubo.light.color = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
-            ubo.light.intensity = 0.7f;
+            ubo.light.intensity = 0.4f;
 
             memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
         }
